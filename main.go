@@ -71,7 +71,7 @@ func connectToSQLServer() (*sql.DB, error) {
 	server := "DESKTOP-OFUUANS"
 	port := 1433
 	user := "sa"
-	password := "Rizola#$2014"
+	password := "Gousers"
 	database := "TodoListDB"
 
 	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d;database=%s", server, user, password, port, database)
