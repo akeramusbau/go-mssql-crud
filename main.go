@@ -68,11 +68,11 @@ func main() {
 
 }
 func connectToSQLServer() (*sql.DB, error) {
-	server := "DESKTOP-OFUUANS"
+	server := "servername"
 	port := 1433
-	user := "sa"
-	password := "Gousers"
-	database := "TodoListDB"
+	user := "username"
+	password := "password"
+	database := "database"
 
 	connString := fmt.Sprintf("server=%s;user id=%s;password=%s;port=%d;database=%s", server, user, password, port, database)
 
