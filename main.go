@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"strconv"
 
 	_ "github.com/denisenkom/go-mssqldb"
+	"github.com/gorilla/mux"
 )
 
 type User struct {
@@ -15,56 +19,103 @@ type User struct {
 	Email    string
 }
 
-func main() {
+func getUsers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("content-Type", "application/json")
+	// Read users
+	db, err := connectToSQLServer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	users, err := queryData(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	json.NewEncoder(w).Encode(users)
+}
+func createUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	db, err := connectToSQLServer()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 
-	var choice int
-	fmt.Scan(&choice)
+	var user User
+	_ = json.NewDecoder(r.Body).Decode(&user)
+	pk, _ := insertData(db, user.Username, user.Email)
+	fmt.Printf("ID : %d", pk)
+	json.NewEncoder(w).Encode("Successful")
+}
 
-	switch choice {
-	case 1:
-		{
-			// Create a user
-			pk, _ := insertData(db, "akera musbau", "akeramusbau@gmail.com")
-			fmt.Printf("ID : %d", pk)
-		}
-	case 2:
-		{
-			// Update a user
-			updatedRows, err := updateData(db, 14, "akera_updated", "akeramusbau@gmail.com")
-			if err != nil {
-				panic(err)
-			}
-
-			fmt.Printf("Number of updated rows: %d", updatedRows)
-		}
-	case 3:
-		{
-			// Delete a user
-			deletedRows, err := deleteData(db, 14)
-			if err != nil {
-				panic(err)
-			}
-
-			fmt.Printf("Number deleted users: %d", deletedRows)
-		}
-	default:
-		{
-			// Read users
-			users, err := queryData(db)
-			if err != nil {
-				log.Fatal(err)
-			}
-			fmt.Println("Users:")
-			for _, user := range users {
-				fmt.Printf("ID: %d, Username: %s, Email: %s\n", user.ID, user.Username, user.Email)
-			}
-		}
+func getUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id := mux.Vars(r)["id"]
+	db, err := connectToSQLServer()
+	if err != nil {
+		log.Fatal(err)
 	}
+	defer db.Close()
+	i, err := strconv.Atoi(id)
+	if err != nil {
+		// ... handle error
+		panic(err)
+	}
+	users, err := queryDataById(db, i)
+	if err != nil {
+		log.Fatal(err)
+	}
+	json.NewEncoder(w).Encode(users)
+}
+func updateUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id := mux.Vars(r)["id"]
+	db, err := connectToSQLServer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	i, err := strconv.Atoi(id)
+	if err != nil {
+		// ... handle error
+		panic(err)
+	}
+	var user User
+	_ = json.NewDecoder(r.Body).Decode(&user)
+	pk, _ := updateData(db, i, user.Username, user.Email)
+	fmt.Printf("ID : %d", pk)
+	json.NewEncoder(w).Encode("Record Updated Successful")
+}
+func deleteUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id := mux.Vars(r)["id"]
+	db, err := connectToSQLServer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	i, err := strconv.Atoi(id)
+	if err != nil {
+		// ... handle error
+		panic(err)
+	}
+	var user User
+	_ = json.NewDecoder(r.Body).Decode(&user)
+	pk, _ := deleteData(db, i)
+	fmt.Printf("ID : %d", pk)
+	json.NewEncoder(w).Encode("Record Deleted Successful")
+}
+func main() {
+
+	r := mux.NewRouter()
+	r.HandleFunc("/users", getUsers).Methods("GET")
+	r.HandleFunc("/users/{id}", getUser).Methods("GET")
+	r.HandleFunc("/users", createUser).Methods("POST")
+	r.HandleFunc("/users/{id}", updateUser).Methods("PUT")
+	r.HandleFunc("/users/{id}", deleteUser).Methods("DELETE")
+	fmt.Printf("Starting at port 8000\n")
+
+	log.Fatal(http.ListenAndServe(":8000", r))
 
 }
 func connectToSQLServer() (*sql.DB, error) {
@@ -162,4 +213,23 @@ func insertData(db *sql.DB, username, email string) (int, error) {
 	}
 
 	return lastInsertedId, nil
+}
+func queryDataById(db *sql.DB, id int) ([]User, error) {
+	query := "SELECT * FROM users where id = @p1"
+	rows, err := db.QueryContext(context.Background(), query, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Username, &user.Email); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
 }
