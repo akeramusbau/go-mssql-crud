@@ -8,8 +8,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	_ "github.com/denisenkom/go-mssqldb"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/mux"
 )
 
@@ -108,18 +110,26 @@ func deleteUser(w http.ResponseWriter, r *http.Request) {
 func main() {
 
 	r := mux.NewRouter()
-	r.HandleFunc("/users", getUsers).Methods("GET")
-	r.HandleFunc("/users/{id}", getUser).Methods("GET")
-	r.HandleFunc("/users", createUser).Methods("POST")
-	r.HandleFunc("/users/{id}", updateUser).Methods("PUT")
-	r.HandleFunc("/users/{id}", deleteUser).Methods("DELETE")
+
+	// Apply middleware globally
+	r.Use(loggingMiddleware)
+	r.Use(errorHandlingMiddleware)
+
+	// Define the endpoints
+	r.HandleFunc("/login", login).Methods("POST")
+	r.Handle("/users", authenticate(http.HandlerFunc(getUsers))).Methods("GET")
+	r.Handle("/users/{id}", authenticate(http.HandlerFunc(getUser))).Methods("GET")
+	r.Handle("/users", authenticate(http.HandlerFunc(createUser))).Methods("POST")
+	r.Handle("/users/{id}", authenticate(http.HandlerFunc(updateUser))).Methods("PUT")
+	r.Handle("/users/{id}", authenticate(http.HandlerFunc(deleteUser))).Methods("DELETE")
+
 	fmt.Printf("Starting at port 8000\n")
 
 	log.Fatal(http.ListenAndServe(":8000", r))
 
 }
 func connectToSQLServer() (*sql.DB, error) {
-	server := "servername"
+	server := "servename"
 	port := 1433
 	user := "username"
 	password := "password"
@@ -232,4 +242,112 @@ func queryDataById(db *sql.DB, id int) ([]User, error) {
 	}
 
 	return users, nil
+}
+
+// authentication
+var jwtKey = []byte("my_secret_key")
+
+type Credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type Claims struct {
+	Username string `json:"username"`
+	jwt.RegisteredClaims
+}
+
+func generateToken(username string) (string, error) {
+	expirationTime := time.Now().Add(5 * time.Minute)
+
+	claims := &Claims{
+		Username: username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtKey)
+	return tokenString, err
+}
+func login(w http.ResponseWriter, r *http.Request) {
+	var creds Credentials
+	err := json.NewDecoder(r.Body).Decode(&creds)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if creds.Username != "admin" || creds.Password != "password" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	token, err := generateToken(creds.Username)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:    "token",
+		Value:   token,
+		Expires: time.Now().Add(5 * time.Minute),
+	})
+}
+func authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("token")
+		if err != nil {
+			if err == http.ErrNoCookie {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		tokenStr := c.Value
+		claims := &Claims{}
+
+		tkn, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil || !tkn.Valid {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// logging
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		// Log the method and the requested URL
+		log.Printf("Started %s %s", r.Method, r.URL.Path)
+
+		// Call the next handler in the chain
+		next.ServeHTTP(w, r)
+
+		// Log how long it took
+		log.Printf("Completed in %v", time.Since(start))
+	})
+}
+func errorHandlingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				// Log the error and send a user-friendly message
+				log.Printf("Error occurred: %v", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
