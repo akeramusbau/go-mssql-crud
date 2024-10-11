@@ -19,6 +19,7 @@ type User struct {
 	ID       int
 	Username string
 	Email    string
+	Password string
 }
 
 func getUsers(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +46,7 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 
 	var user User
 	_ = json.NewDecoder(r.Body).Decode(&user)
-	pk, _ := insertData(db, user.Username, user.Email)
+	pk, _ := insertData(db, user.Username, user.Email, user.Password)
 	fmt.Printf("ID : %d", pk)
 	json.NewEncoder(w).Encode("Successful")
 }
@@ -129,7 +130,7 @@ func main() {
 
 }
 func connectToSQLServer() (*sql.DB, error) {
-	server := "servename"
+	server := "servername"
 	port := 1433
 	user := "username"
 	password := "password"
@@ -163,7 +164,7 @@ func queryData(db *sql.DB) ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Username, &user.Email); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.Password); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -209,15 +210,15 @@ func deleteData(db *sql.DB, id int) (int64, error) {
 
 	return rowsAffected, nil
 }
-func insertData(db *sql.DB, username, email string) (int, error) {
-	stmt, err := db.Prepare("INSERT INTO users(USERNAME,EMAIL) OUTPUT INSERTED.id VALUES (@p1,@P2)")
+func insertData(db *sql.DB, username, email string, password string) (int, error) {
+	stmt, err := db.Prepare("INSERT INTO users(USERNAME,EMAIL,password) OUTPUT INSERTED.id VALUES (@p1,@P2,@p3)")
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
 
 	var lastInsertedId int
-	err = stmt.QueryRow(username, email).Scan(&lastInsertedId)
+	err = stmt.QueryRow(username, email, password).Scan(&lastInsertedId)
 	if err != nil {
 		return 0, nil
 	}
@@ -235,7 +236,27 @@ func queryDataById(db *sql.DB, id int) ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Username, &user.Email); err != nil {
+		if err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.Password); err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
+func userLogin(db *sql.DB, username string, email string) ([]User, error) {
+	query := "SELECT * FROM users where username = @p1 and password = @p2"
+	rows, err := db.QueryContext(context.Background(), query, username, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.Password); err != nil {
 			return nil, err
 		}
 		users = append(users, user)
@@ -279,7 +300,18 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if creds.Username != "admin" || creds.Password != "password" {
+	db, err := connectToSQLServer()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	var users []User
+	users, err = userLogin(db, creds.Username, creds.Password)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if len(users) == 0 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
